@@ -1,0 +1,314 @@
+
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "",
+    "Metadata": {
+
+    },
+    "Parameters": {
+
+    },
+    "Mappings": {
+
+    },
+    "Conditions": {
+
+    },
+    "Resources": {
+        "VPC": {
+          "Type": "AWS::EC2::VPC",
+          "Properties": {
+            "CidrBlock": "172.31.0.0/16",
+            "EnableDnsHostnames": "true",
+            "Tags" : [ { "Key" : "Name", "Value" : "selfstudy-cfn-vpc" } ]
+          }
+        },     
+        "privSubnet": {
+          "DependsOn" : "VPC",
+          "Type": "AWS::EC2::Subnet",
+          "Properties": {
+            "VpcId": { "Ref": "VPC" },
+            "AvailabilityZone" : { "Fn::Join" : ["", [ {"Ref" : "AWS::Region"}, "a" ] ] },
+            "CidrBlock": "172.31.0.0/24",
+            "Tags" : [ { "Key" : "Name", "Value" : "selfstudy-cfn-private" } ]
+          }
+        },
+        "pubSubnet": {
+          "DependsOn" : "VPC",
+          "Type": "AWS::EC2::Subnet",
+          "Properties": {
+            "VpcId": { "Ref": "VPC" },
+            "AvailabilityZone" : { "Fn::Join" : ["", [ {"Ref" : "AWS::Region"}, "b" ] ] },
+            "CidrBlock": "172.31.10.0/24",
+            "Tags" : [ { "Key" : "Name", "Value" : "selfstudy-cfn-public" } ]
+          }
+        },
+        "igw": {
+          "Type": "AWS::EC2::InternetGateway",
+          "Properties": {
+            "Tags" : [ { "Key" : "Name", "Value" : "selfstudy-cfn-igw" } ]
+          }
+        },
+        "attachGateway": {
+          "DependsOn" : "VPC",
+          "Type": "AWS::EC2::VPCGatewayAttachment",
+          "Properties": {
+            "VpcId": { "Ref": "VPC" },
+            "InternetGatewayId": { "Ref": "igw" }
+          }
+        },
+        "nateip": {
+          "Type": "AWS::EC2::EIP",
+            "Properties" : {
+                "Domain" : "vpc"
+            }
+        },
+        "natgw" : {
+          "DependsOn" : "attachGateway",
+          "Type" : "AWS::EC2::NatGateway",
+          "Properties" : {
+            "AllocationId" : { "Fn::GetAtt" : ["nateip", "AllocationId"] },
+            "SubnetId" : { "Ref" : "pubSubnet" }
+            }
+        },
+        "privatert": {
+          "DependsOn" : "VPC",
+          "Type": "AWS::EC2::RouteTable",
+          "Properties": {
+            "VpcId": { "Ref": "VPC" },
+            "Tags" : [ { "Key" : "Name", "Value" : "selfstudy-cfn-priv-rt" } ]
+          }
+        },
+        "publicrt": {
+          "DependsOn" : "VPC",
+          "Type": "AWS::EC2::RouteTable",
+          "Properties": {
+            "VpcId": { "Ref": "VPC" },
+            "Tags" : [ { "Key" : "Name", "Value" : "selfstudy-cfn-pub-rt" } ]
+          }
+        },
+        "igwRoute": {
+          "DependsOn" : "igw",
+          "Type": "AWS::EC2::Route",
+          "Properties": {
+            "RouteTableId": { "Ref": "publicrt" },
+            "DestinationCidrBlock": "0.0.0.0/0",
+            "GatewayId": { "Ref": "igw" }            
+          }
+        },
+        "natRoute" : {
+          "DependsOn" : "natgw",
+          "Type" : "AWS::EC2::Route",
+          "Properties" : {
+            "RouteTableId" : { "Ref" : "privatert" },
+            "DestinationCidrBlock" : "0.0.0.0/0",
+            "NatGatewayId" : { "Ref" : "natgw" }
+          }    
+        },
+        "publicrt2pubnet": {
+          "Type": "AWS::EC2::SubnetRouteTableAssociation",
+          "Properties": {
+            "RouteTableId": { "Ref": "publicrt" },
+            "SubnetId":
+                { "Ref": "pubSubnet" }
+             }
+        },
+        "privatert2privnet": {
+          "Type": "AWS::EC2::SubnetRouteTableAssociation",
+          "Properties": {
+            "RouteTableId": { "Ref": "privatert" },
+            "SubnetId":
+                { "Ref": "privSubnet" }
+             }
+        },
+        "defaultCfnSG": {
+            "Type" : "AWS::EC2::SecurityGroup",
+            "Properties" : {
+                "GroupName" : "selfstudy-cfn-instance-sg",
+                "GroupDescription" : "Enable SSH and HTTP access only within the VPC",
+                "SecurityGroupIngress" : [
+                    { "IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Fn::GetAtt": [ "VPC", "CidrBlock" ] } },
+                    { "IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "CidrIp" : { "Fn::GetAtt": [ "VPC", "CidrBlock" ] } }
+                ],
+                "VpcId" : { "Ref": "VPC" }
+            }
+        },
+        "elbCfnSG": {
+            "Type" : "AWS::EC2::SecurityGroup",
+            "Properties" : {
+                "GroupName" : "selfstudy-cfn-elb-sg",
+                "GroupDescription" : "Enable HTTP access from EPAM offices",
+                "SecurityGroupIngress" : [ 
+                    { "IpProtocol": "tcp","FromPort": "80", "ToPort": "80", "CidrIp": "213.184.243.0/24" },
+                    { "IpProtocol": "tcp","FromPort": "80", "ToPort": "80", "CidrIp": "217.21.56.0/24" },
+                    { "IpProtocol": "tcp","FromPort": "80", "ToPort": "80", "CidrIp": "217.21.63.0/24" },
+                    { "IpProtocol": "tcp","FromPort": "80", "ToPort": "80", "CidrIp": "213.184.231.0/24" },
+                    { "IpProtocol": "tcp","FromPort": "80", "ToPort": "80", "CidrIp": "86.57.255.88/29" }
+                ],
+                "VpcId" : { "Ref": "VPC" }
+            }
+        },
+        "bastionCfnSG": {
+            "Type" : "AWS::EC2::SecurityGroup",
+            "Properties" : {
+                "GroupName" : "selfstudy-cfn-bastion-sg",
+                "GroupDescription" : "Enable ssh access from EPAM offices",
+                "SecurityGroupIngress" : [ 
+                    { "IpProtocol": "tcp","FromPort": "22", "ToPort": "22", "CidrIp": "213.184.243.0/24" },
+                    { "IpProtocol": "tcp","FromPort": "22", "ToPort": "22", "CidrIp": "217.21.56.0/24" },
+                    { "IpProtocol": "tcp","FromPort": "22", "ToPort": "22", "CidrIp": "217.21.63.0/24" },
+                    { "IpProtocol": "tcp","FromPort": "22", "ToPort": "22", "CidrIp": "213.184.231.0/24" },
+                    { "IpProtocol": "tcp","FromPort": "22", "ToPort": "22", "CidrIp": "86.57.255.88/29" }
+                ],
+                "VpcId" : { "Ref": "VPC" }
+            }
+        },
+        "web1": {
+            "DependsOn" : "natgw",
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "ImageId": "ami-02ace471",
+                "InstanceType": "t2.micro",
+                "KeyName": "hreben-aws-ireland",
+                "Monitoring": "false",
+                "SecurityGroupIds" : [ { "Ref": "defaultCfnSG" } ],
+                "SubnetId": { "Ref": "privSubnet" },
+                "Tags": [
+                    { "Key": "Name", "Value": "selfstudy-cfn-web1" }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "#!/bin/bash\n",
+                                "yum install -y httpd\n",
+                                "firewall-cmd --permanent --zone=public --add-port=80/tcp\n",
+                                "systemctl enable httpd\n",
+                                "systemctl start httpd\n",
+                                "cat <<EOF > /var/www/html/index.html\n",
+                                "<html>\n<body>\n",
+                                "<h1>Hello World</h1>\n",
+                                "<p>written by Siarhei Hreben</p>\n<p/>\n",
+                                "<h3>Instance details:</p>\n<ul>\n",
+                                "<li>instance id:       $(curl http://169.254.169.254/latest/meta-data/instance-id)</li>\n",
+                                "<li>instance type:     $(curl http://169.254.169.254/latest/meta-data/instance-type)</li>\n",
+                                "<li>local hostname:    $(curl http://169.254.169.254/latest/meta-data/local-hostname)</li>\n",
+                                "<li>local ip:          $(curl http://169.254.169.254/latest/meta-data/local-ipv4)</li>\n",
+                                "<li>security groups:   $(curl http://169.254.169.254/latest/meta-data/security-groups)</li>\n",
+                                "</ul>\n",
+                                "</body>\n</html>\nEOF\n"
+                            ]
+                        ]
+                    }
+                }
+            }
+        },
+        "web2": {
+            "DependsOn" : "natgw",
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "ImageId": "ami-02ace471",
+                "InstanceType": "t2.micro",
+                "KeyName": "hreben-aws-ireland",
+                "Monitoring": "false",
+                "SecurityGroupIds" : [ { "Ref": "defaultCfnSG" } ],
+                "SubnetId": { "Ref": "privSubnet" },
+                "Tags": [
+                    { "Key": "Name", "Value": "selfstudy-cfn-web2" }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "#!/bin/bash\n",
+                                "yum install -y httpd\n",
+                                "firewall-cmd --permanent --zone=public --add-port=80/tcp\n",
+                                "systemctl enable httpd\n",
+                                "systemctl start httpd\n",
+                                "cat <<EOF > /var/www/html/index.html\n",
+                                "<html>\n<body>\n",
+                                "<h1>Hello World</h1>\n",
+                                "<p>written by Siarhei Hreben</p>\n<p/>\n",
+                                "<h3>Instance details:</p>\n<ul>\n",
+                                "<li>instance id:       $(curl http://169.254.169.254/latest/meta-data/instance-id)</li>\n",
+                                "<li>instance type:     $(curl http://169.254.169.254/latest/meta-data/instance-type)</li>\n",
+                                "<li>local hostname:    $(curl http://169.254.169.254/latest/meta-data/local-hostname)</li>\n",
+                                "<li>local ip:          $(curl http://169.254.169.254/latest/meta-data/local-ipv4)</li>\n",
+                                "<li>security groups:   $(curl http://169.254.169.254/latest/meta-data/security-groups)</li>\n",
+                                "</ul>\n",
+                                "</body>\n</html>\nEOF\n"
+                            ]
+                        ]
+                    }
+                }
+            }
+        },
+        "bastion": {
+            "Type": "AWS::EC2::Instance",
+            "Properties": {
+                "ImageId": "ami-02ace471",
+                "InstanceType": "t2.micro",
+                "KeyName": "hreben-aws-ireland",
+                "Monitoring": "false",
+                "NetworkInterfaces": [ {
+                    "AssociatePublicIpAddress": "true",
+                    "DeviceIndex": "0",
+                    "GroupSet" : [ { "Ref": "bastionCfnSG" } ],
+                    "SubnetId": { "Ref" : "pubSubnet" }
+                } ],
+                "Tags": [
+                    { "Key": "Name", "Value": "selfstudy-cfn-bastion" }
+                ]
+            }
+        },
+        "elb": {
+            "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+            "Properties": {
+                "Name": "selfstudy-cfn-elb",
+                "SecurityGroups": [ {"Ref": "elbCfnSG"} ],
+                "Subnets": [ { "Ref": "privSubnet" }, { "Ref": "pubSubnet" } ]
+            }
+        },
+        "elbListener": {
+            "Type": "AWS::ElasticLoadBalancingV2::Listener",
+            "Properties": {
+                "DefaultActions": [
+                    { "Type": "forward", "TargetGroupArn": { "Ref": "elbTargetGroup" } }
+                ],
+                "LoadBalancerArn": { "Ref": "elb" },
+                "Port": "80",
+                "Protocol": "HTTP"
+            }
+        },
+        "elbTargetGroup": {
+            "DependsOn" : [ "web1", "web2" ],
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "Name": "selfstudy-cfn-webservers",
+                "HealthCheckIntervalSeconds": 30,
+                "HealthCheckTimeoutSeconds": 5,
+                "HealthyThresholdCount": 3,
+                "Port": 80,
+                "Protocol": "HTTP",
+                "Targets": [
+                    { "Id": { "Ref": "web1" } },
+                    { "Id": { "Ref": "web2" } }
+                ],
+                "UnhealthyThresholdCount": 5,
+                "VpcId": { "Ref": "VPC" }
+            }
+        }
+    },
+    "Outputs": {
+        "LoadbalancerURL" : {
+            "Description" : "The URL of the website",
+            "Value" :  { "Fn::Join" : [ "", [ "http://", { "Fn::GetAtt" : ["elb", "DNSName" ] } ] ] }
+        },
+        "BastionHostDNSName" : {
+            "Description" : "Bastion host dns name",
+            "Value" :  { "Fn::GetAtt" : ["bastion", "PublicDnsName" ] }
+        }
+    }
+}
